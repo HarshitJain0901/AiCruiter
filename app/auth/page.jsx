@@ -9,7 +9,7 @@ function Login() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `emailRedirectTo: ${process.env.NEXT_PUBLIC_SITE_URL}/dashboard`,
+        redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard`,
       },
     });
 

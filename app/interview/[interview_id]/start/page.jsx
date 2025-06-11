@@ -11,7 +11,6 @@ import AlertConfirmation from "./_components/AlertConfirmation";
 import axios from "axios";
 import { createClient } from "@supabase/supabase-js";
 
-// Create Supabase client (check env vars logged below)
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -21,7 +20,7 @@ function StartInterviewPage() {
   const { interviewInfo } = useInterviewData();
   const router = useRouter();
   const params = useParams();
-  const interview_id = params.interview_id;
+  const interview_id = params?.interview_id?.toString();
   const vapiRef = useRef(null);
 
   const [isMuted, setIsMuted] = useState(false);
@@ -31,50 +30,33 @@ function StartInterviewPage() {
   const [secondsElapsed, setSecondsElapsed] = useState(0);
   const timerRef = useRef(null);
 
-  // Log environment variables once for debugging
-  useEffect(() => {
-    console.log("Supabase URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
-    console.log(
-      "Supabase ANON KEY:",
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "Present" : "Missing"
-    );
-  }, []);
-
-  useEffect(() => {
-    if (!interviewInfo) {
-      toast.error("No interview data found. Redirecting...");
-      router.push("/");
-    }
-  }, [interviewInfo, router]);
-
   const GenerateFeedback = useCallback(
     async ({ conversation }) => {
-      if (!conversation) {
-        console.warn("No conversation found to generate feedback.");
-        return;
-      }
-
-      if (!interviewInfo) {
-        console.warn("No interviewInfo found.");
-        return;
-      }
-
-      if (!interview_id) {
-        console.warn("No interview_id found in params.");
+      if (!conversation || !interviewInfo || !interview_id) {
+        console.warn("Missing data: ", {
+          conversation,
+          interviewInfo,
+          interview_id,
+        });
         return;
       }
 
       try {
-        // Call your feedback API
         const result = await axios.post("/api/ai-model/ai-feedback", {
           conversation,
         });
-        const content = result.data.content;
-        console.log("AI feedback API response:", result.data);
+        let content = result.data.content;
 
-        // Clean JSON string
-        const FINAL_CONTENT = content.replace("```json", "").replace("```", "");
-        const feedbackJSON = JSON.parse(FINAL_CONTENT);
+        // Clean JSON block
+        const cleaned = content.replace(/```json|```/g, "");
+        let feedbackJSON;
+        try {
+          feedbackJSON = JSON.parse(cleaned);
+        } catch (err) {
+          console.error("JSON parse error:", err, cleaned);
+          toast.error("Invalid feedback format");
+          return;
+        }
 
         const {
           technicalSkills = 0,
@@ -83,9 +65,9 @@ function StartInterviewPage() {
           experience = 0,
         } = feedbackJSON.rating || {};
 
-        const averageScore =
+        const avg =
           (technicalSkills + communication + problemSolving + experience) / 4;
-        const isRecommended = averageScore >= 5.5;
+        const isRecommended = avg >= 5.5;
 
         feedbackJSON.Recommendation = isRecommended
           ? "Recommended"
@@ -94,16 +76,13 @@ function StartInterviewPage() {
           ? "The candidate has shown satisfactory skills and is recommended for the role."
           : "The candidate needs improvement in key areas and is not recommended at this time.";
 
-        // Log data before insert
-        console.log("Attempting to insert feedback to Supabase:", {
-          name: interviewInfo.candidateName,
-          userEmail: interviewInfo.userEmail,
-          interview_id,
-          feedback: feedbackJSON,
-          recommended: isRecommended,
+        console.table({
+          Name: interviewInfo.candidateName,
+          Email: interviewInfo.userEmail,
+          InterviewID: interview_id,
+          Recommended: isRecommended,
         });
 
-        // Insert feedback into Supabase
         const { data, error } = await supabase
           .from("interview-feedback")
           .insert([
@@ -118,20 +97,29 @@ function StartInterviewPage() {
 
         if (error) {
           console.error("Supabase insert error:", error);
-          toast.error("Failed to save feedback.");
+          toast.error("Failed to save feedback to Supabase.");
           return;
         }
-        console.log("Feedback successfully inserted:", data);
 
-        // Navigate to completed page
+        console.log("🎉 Feedback saved successfully:", data);
         router.push(`/interview/${interview_id}/completed`);
       } catch (error) {
-        console.error("Error generating feedback:", error);
+        console.error(
+          "❌ Feedback generation failed:",
+          error?.response?.data || error.message
+        );
         toast.error("Failed to generate feedback.");
       }
     },
     [interviewInfo, interview_id, router]
   );
+
+  useEffect(() => {
+    if (!interviewInfo) {
+      toast.error("No interview data found. Redirecting...");
+      router.push("/");
+    }
+  }, [interviewInfo, router]);
 
   useEffect(() => {
     if (interviewInfo && !vapiRef.current) {
@@ -141,7 +129,7 @@ function StartInterviewPage() {
       const userName = interviewInfo.candidateName || "Candidate";
       const jobPosition = interviewInfo.jobPosition || "a role";
       const questionList = interviewInfo?.interviewData?.questionList
-        ?.map((item) => item?.question)
+        ?.map((q) => q?.question)
         .join(", ");
 
       const assistantOptions = {
@@ -164,27 +152,10 @@ function StartInterviewPage() {
               role: "system",
               content: `
 You are an AI voice assistant conducting interviews.
-Your job is to ask candidates provided interview questions, assess their responses.
-Begin the conversation with a friendly introduction, setting a relaxed yet professional tone. Example:
-"Hey there! Welcome to your ${jobPosition} interview. Let’s get started with a few questions!"
-Ask one question at a time and wait for the candidate’s response before proceeding. Keep the questions clear and concise. Below Are the questions ask one by one:
-Questions: ${questionList}
-If the candidate struggles, offer hints or rephrase the question without giving away the answer. Example:
-"Need a hint? Think about how React tracks component updates!"
-Provide brief, encouraging feedback after each answer. Example:
-"Nice! That’s a solid answer."
-"Hmm, not quite! Want to try again?"
-Keep the conversation natural and engaging—use casual phrases like "Alright, next up..." or "Let’s tackle a tricky one!"
-After 5-7 questions, wrap up the interview smoothly by summarizing their performance. Example:
-"That was great! You handled some tough questions well. Keep sharpening your skills!"
-End on a positive note:
-"Thanks for chatting! Hope to see you crushing projects soon!"
+Ask the following questions one by one:
+${questionList}
 
-Key Guidelines:
-✅ Be friendly, engaging, and witty 😄
-✅ Keep responses short and natural, like a real conversation
-✅ Adapt based on the candidate’s confidence level
-✅ Ensure the interview remains focused on React
+Give hints if the candidate struggles. Be friendly and concise. Wrap up after 5-7 questions and give brief summary feedback.
               `.trim(),
             },
           ],
@@ -194,12 +165,8 @@ Key Guidelines:
       const handleCallEnd = async () => {
         setCallStatus("idle");
         clearInterval(timerRef.current);
-        if (conversation) {
-          console.log("Call ended, generating feedback.");
-          await GenerateFeedback({ conversation });
-        } else {
-          router.push(`/interview/${interview_id}/completed`);
-        }
+        if (conversation) await GenerateFeedback({ conversation });
+        else router.push(`/interview/${interview_id}/completed`);
       };
 
       const handleError = (err) => {
@@ -220,21 +187,20 @@ Key Guidelines:
         setConversation(message?.conversation);
       });
 
-      setCallStatus("connecting");
-
       vapi
         .start(assistantOptions)
         .then(() => {
           setCallStatus("active");
           vapi.setMuted(false);
           setIsMuted(false);
-          timerRef.current = setInterval(() => {
-            setSecondsElapsed((prev) => prev + 1);
-          }, 1000);
+          timerRef.current = setInterval(
+            () => setSecondsElapsed((s) => s + 1),
+            1000
+          );
         })
         .catch((err) => {
-          console.error("Start call failed:", err);
-          toast.error("Failed to start interview");
+          console.error("Call start failed:", err);
+          toast.error("Failed to start interview.");
           setCallStatus("idle");
         });
 
@@ -244,8 +210,8 @@ Key Guidelines:
         clearInterval(timerRef.current);
         try {
           vapi.stop();
-        } catch (err) {
-          console.error("Cleanup error:", err);
+        } catch (e) {
+          console.warn("Vapi stop failed:", e);
         }
       };
     }
@@ -254,15 +220,10 @@ Key Guidelines:
   const toggleMute = () => {
     const vapi = vapiRef.current;
     if (!vapi || callStatus !== "active") return toast.error("Call not active");
-
-    try {
-      const newMutedState = !isMuted;
-      vapi.setMuted(newMutedState);
-      setIsMuted(newMutedState);
-      toast(newMutedState ? "Muted" : "Unmuted");
-    } catch (error) {
-      toast.error("Failed to toggle mute");
-    }
+    const muted = !isMuted;
+    vapi.setMuted(muted);
+    setIsMuted(muted);
+    toast(muted ? "Muted" : "Unmuted");
   };
 
   const stopInterview = async () => {
@@ -272,14 +233,11 @@ Key Guidelines:
 
     try {
       vapi.stop();
-      toast.success("Interview ended and saved");
       clearInterval(timerRef.current);
-      if (conversation) {
-        await GenerateFeedback({ conversation });
-      } else {
-        router.push(`/interview/${interview_id}/completed`);
-      }
-    } catch (error) {
+      toast.success("Interview ended and saved");
+      if (conversation) await GenerateFeedback({ conversation });
+      else router.push(`/interview/${interview_id}/completed`);
+    } catch (err) {
       toast.error("Failed to end interview");
     }
   };
@@ -287,15 +245,10 @@ Key Guidelines:
   if (!interviewInfo) return null;
 
   const firstLetter = interviewInfo.candidateName?.charAt(0).toUpperCase();
-  const formatTime = (totalSeconds) => {
-    const hrs = String(Math.floor(totalSeconds / 3600)).padStart(2, "0");
-    const mins = String(Math.floor((totalSeconds % 3600) / 60)).padStart(
-      2,
-      "0"
-    );
-    const secs = String(totalSeconds % 60).padStart(2, "0");
-    return `${hrs}:${mins}:${secs}`;
-  };
+  const formatTime = (t) =>
+    `${String(Math.floor(t / 3600)).padStart(2, "0")}:${String(
+      Math.floor((t % 3600) / 60)
+    ).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
 
   return (
     <div className="p-4 md:p-20 lg:px-48 xl:px-56">

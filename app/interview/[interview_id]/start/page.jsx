@@ -103,6 +103,14 @@ function StartInterviewPage() {
           recommended: isRecommended,
         });
 
+        console.log("Inserting into Supabase:", {
+          name: interviewInfo.candidateName,
+          userEmail: interviewInfo.userEmail,
+          interview_id,
+          feedback: feedbackJSON,
+          recommended: isRecommended,
+        });
+
         // Insert feedback into Supabase
         const { data, error } = await supabase
           .from("interview-feedback")
